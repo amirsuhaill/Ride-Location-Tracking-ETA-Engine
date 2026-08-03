@@ -1,0 +1,37 @@
+name: ride-tracking-test
+
+services:
+  postgres-test:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: ${TEST_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${TEST_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${TEST_POSTGRES_DB}
+    volumes:
+      # tmpfs, not a named volume: every run starts from a completely empty database and nothing
+      # persists after `docker compose down` — this is never the dev database and never holds
+      # data across runs.
+      - ./postgres/init/01-enable-postgis.sql:/docker-entrypoint-initdb.d/01-enable-postgis.sql:ro
+    tmpfs:
+      - /var/lib/postgresql/data
+    ports:
+      - "${TEST_POSTGRES_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${TEST_POSTGRES_USER} -d ${TEST_POSTGRES_DB}"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 3s
+
+  redis-test:
+    image: redis:7-alpine
+    # No volume at all: redis:7-alpine keeps data in memory only unless a volume is mounted for
+    # its RDB/AOF files, so this is disposable by construction — nothing to tmpfs.
+    ports:
+      - "${TEST_REDIS_PORT:-6380}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 2s

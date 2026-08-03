@@ -1,0 +1,16 @@
+{
+  "name": "ride-tracking",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Monorepo for the ride-tracking & ETA engine project.",
+  "workspaces": [
+    "core"
+  ],
+  "scripts": {
+    "up": "docker compose --env-file infra/.env -f infra/docker-compose.yml up --build",
+    "up:d": "docker compose --env-file infra/.env -f infra/docker-compose.yml up --build -d",
+    "down": "docker compose --env-file infra/.env -f infra/docker-compose.yml down",
+    "logs": "docker compose --env-file infra/.env -f infra/docker-compose.yml logs -f",
+    "ps": "docker compose --env-file infra/.env -f infra/docker-compose.yml ps"
+  }
+}

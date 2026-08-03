@@ -1,0 +1,101 @@
+name: ride-tracking
+
+networks:
+  ride-tracking-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init/01-enable-postgis.sql:/docker-entrypoint-initdb.d/01-enable-postgis.sql:ro
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks:
+      - ride-tracking-net
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 3s
+    networks:
+      - ride-tracking-net
+
+  core:
+    build:
+      context: ../core
+    environment:
+      PORT: 3000
+      HOST: 0.0.0.0
+      NODE_ENV: development
+      LOG_LEVEL: info
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379
+      DRIVER_STALE_MS: 90000
+      RECONCILE_INTERVAL_MS: 30000
+      WS_DRIVER_THROTTLE_MS: 1000
+      WS_HEARTBEAT_INTERVAL_MS: 30000
+      WS_TIMESTAMP_TOLERANCE_MS: 300000
+      WS_BATCH_WINDOW_MS: 300
+      WS_BANDWIDTH_LOG_INTERVAL_MS: 30000
+      MATCH_SEARCH_RADIUS_METERS: 5000
+      MATCH_MAX_CANDIDATES: 5
+      MATCH_OFFER_TIMEOUT_MS: 10000
+      MATCH_DISTANCE_WEIGHT: 0.6
+      MATCH_IDLE_TIME_WEIGHT: 0.25
+      MATCH_RATING_WEIGHT: 0.15
+      MATCH_MAX_IDLE_TIME_MS: 600000
+      ML_SERVICE_URL: http://ml-service:8000
+      APP_VERSION: 0.1.0
+      BUILD_VERSION: ${BUILD_VERSION:-local}
+    ports:
+      - "${CORE_PORT:-3000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ride-tracking-net
+
+  ml-service:
+    build:
+      context: ../ml-service
+    environment:
+      PORT: 8000
+      ENVIRONMENT: development
+      LOG_LEVEL: info
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379
+      CORE_SERVICE_URL: http://core:3000
+      APP_VERSION: 0.1.0
+      BUILD_VERSION: ${BUILD_VERSION:-local}
+    ports:
+      - "${ML_SERVICE_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ride-tracking-net
