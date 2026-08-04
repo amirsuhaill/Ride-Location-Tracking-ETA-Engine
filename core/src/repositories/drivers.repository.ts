@@ -87,6 +87,27 @@ export async function findDriverById(id: string): Promise<Driver | null> {
   return rows[0] ? mapRow(rows[0]) : null;
 }
 
+export interface DriverPosition {
+  id: string;
+  lat: number;
+  lng: number;
+}
+
+/** Every currently-online driver with a known position — used by surge.service.ts (Phase 13) to
+ * tally supply per zone. Deliberately excludes "busy" drivers: a driver already on a trip isn't
+ * available supply for a new one, so counting them would understate how tight a zone's real
+ * demand/supply ratio is. Reads Postgres (kept fresh by the location-batch flush, Phase 5) rather
+ * than Redis's geo index — the geo index tracks *reachability*, not the online/busy distinction,
+ * which lives on the durable `drivers` row (see docs/redis-geo.md). */
+export async function findOnlineDriversWithLocation(): Promise<DriverPosition[]> {
+  const { rows } = await pool.query<{ id: string; lat: number; lng: number }>(
+    `SELECT id, ST_Y(current_location::geometry) AS lat, ST_X(current_location::geometry) AS lng
+     FROM drivers
+     WHERE status = 'online' AND current_location IS NOT NULL`,
+  );
+  return rows;
+}
+
 export async function updateDriverStatus(id: string, status: DriverStatus): Promise<Driver | null> {
   const { rows } = await pool.query<DriverRow>(
     `UPDATE drivers SET status = $2, last_updated_at = now()

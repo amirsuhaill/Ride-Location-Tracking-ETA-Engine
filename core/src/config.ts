@@ -2,6 +2,34 @@ import { config as loadEnv } from "dotenv";
 
 loadEnv();
 
+/** Which engine(s) GET /trips/:id/eta uses — see docs/eta-integration.md.
+ * - "heuristic": Phase 7's haversine + rush-hour estimate only, never calls ml-service.
+ * - "ml": ml-service's /predict-eta only — no fallback, so ML failures are surfaced directly
+ *   (degrading to the last cached value, same as any other "couldn't get a fresh number" case)
+ *   rather than silently masked by the heuristic. Meant for demoing/evaluating the model in
+ *   isolation, not for production use without a fallback.
+ * - "ml_with_fallback": tries ml-service first; falls back to the heuristic on any failure
+ *   (unreachable, timeout, or a malformed/error response).
+ */
+export type EtaMode = "heuristic" | "ml" | "ml_with_fallback";
+
+function parseEtaMode(value: string | undefined): EtaMode {
+  if (value === "heuristic" || value === "ml" || value === "ml_with_fallback") return value;
+  if (value !== undefined) {
+    throw new Error(
+      `ETA_MODE must be one of "heuristic", "ml", "ml_with_fallback" — got: ${value}`,
+    );
+  }
+  return "heuristic";
+}
+
+function parseBool(value: string | undefined, defaultValue: boolean): boolean {
+  if (value === undefined) return defaultValue;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new Error(`expected "true" or "false" — got: ${value}`);
+}
+
 export interface AppConfig {
   port: number;
   host: string;
@@ -41,6 +69,63 @@ export interface AppConfig {
   matchRatingWeight: number;
   /** Idle time at or beyond this is treated as maximally idle for scoring purposes. */
   matchMaxIdleTimeMs: number;
+
+  /** Baseline average driving speed used for the heuristic ETA (see docs/eta.md). */
+  etaAvgSpeedMetersPerSecond: number;
+  /** Minimum time between ETA recomputes for a given trip, even if the driver keeps moving. */
+  etaRecomputeIntervalMs: number;
+  /** Minimum driver movement (from the position the last ETA was computed at) to trigger a recompute. */
+  etaRecomputeDistanceMeters: number;
+  /** A driver's location older than this is too stale to compute a trustworthy ETA from. */
+  etaStaleLocationMs: number;
+  /** Which engine(s) GET /trips/:id/eta uses (see the EtaMode doc comment above). */
+  etaMode: EtaMode;
+  /** Max time to wait for ml-service's /predict-eta before treating it as a failure (Phase 10). */
+  etaMlTimeoutMs: number;
+  /** Minimum time between ML recomputes for a given trip — separate from (and typically much
+   * shorter than) etaRecomputeIntervalMs, since a heuristic recompute is a free local
+   * calculation while an ML recompute is a network call worth protecting ml-service from being
+   * hammered by rapid location updates. Uses the exact same throttle mechanism as
+   * etaRecomputeIntervalMs (see eta.service.ts#maybeRecomputeEta) — just a different threshold
+   * value depending on which engine is in play, not a second parallel cache. */
+  etaMlCacheTtlMs: number;
+
+  /** Base URL of the OSRM routing service (Phase 15, see docs/osrm-routing.md), e.g.
+   * http://osrm:5000. */
+  osrmUrl: string;
+  /** Whether the heuristic ETA path attempts a real road-network OSRM route before falling back
+   * to straight-line haversine — off by default so a fresh checkout without a built OSRM dataset
+   * degrades to the pre-Phase-15 behavior instead of failing every request. */
+  etaOsrmEnabled: boolean;
+  /** Max time to wait for OSRM's /route before treating it as a failure and falling back to the
+   * haversine heuristic — same fallback mechanism/pattern as etaMlTimeoutMs (Phase 10). */
+  etaOsrmTimeoutMs: number;
+
+  /** Surge zones are geohash cells sized to roughly this radius (see docs/surge-pricing.md) —
+   * reuses Phase 12's precisionForRadius to turn a real-world distance into a bit precision,
+   * rather than a raw, hard-to-reason-about bit count. */
+  surgeZoneRadiusMeters: number;
+  /** How often the background job recomputes every zone's surge multiplier — deliberately not
+   * per-request (see docs/surge-pricing.md). */
+  surgeUpdateIntervalMs: number;
+  /** Surge never goes below this (no "discount" multiplier). */
+  surgeMinMultiplier: number;
+  /** Surge never goes above this, regardless of how extreme a zone's demand/supply ratio is. */
+  surgeMaxMultiplier: number;
+  /** A zone needs at least this many open trip requests before surge is allowed to move off the
+   * floor at all — the guard against "1 request, 0 drivers" spiking to the ceiling on no real
+   * signal. */
+  surgeMinSampleRequests: number;
+  /** Max amount a zone's multiplier may move, up or down, in a single update interval — the
+   * smoothing/anti-thrashing cap. */
+  surgeMaxChangePerInterval: number;
+
+  /** Flat fare component, in cents (see docs/surge-pricing.md's fare formula). */
+  fareBaseCents: number;
+  /** Per-kilometer fare component, in cents. */
+  farePerKmCents: number;
+  /** Per-minute fare component, in cents. */
+  farePerMinuteCents: number;
 }
 
 export const config: AppConfig = {
@@ -67,4 +152,23 @@ export const config: AppConfig = {
   matchIdleTimeWeight: Number(process.env.MATCH_IDLE_TIME_WEIGHT ?? 0.25),
   matchRatingWeight: Number(process.env.MATCH_RATING_WEIGHT ?? 0.15),
   matchMaxIdleTimeMs: Number(process.env.MATCH_MAX_IDLE_TIME_MS ?? 10 * 60_000),
+  etaAvgSpeedMetersPerSecond: Number(process.env.ETA_AVG_SPEED_MPS ?? 8),
+  etaRecomputeIntervalMs: Number(process.env.ETA_RECOMPUTE_INTERVAL_MS ?? 15_000),
+  etaRecomputeDistanceMeters: Number(process.env.ETA_RECOMPUTE_DISTANCE_METERS ?? 200),
+  etaStaleLocationMs: Number(process.env.ETA_STALE_LOCATION_MS ?? 60_000),
+  etaMode: parseEtaMode(process.env.ETA_MODE),
+  etaMlTimeoutMs: Number(process.env.ETA_ML_TIMEOUT_MS ?? 200),
+  etaMlCacheTtlMs: Number(process.env.ETA_ML_CACHE_TTL_MS ?? 5_000),
+  osrmUrl: process.env.OSRM_URL ?? "",
+  etaOsrmEnabled: parseBool(process.env.ETA_OSRM_ENABLED, false),
+  etaOsrmTimeoutMs: Number(process.env.ETA_OSRM_TIMEOUT_MS ?? 300),
+  surgeZoneRadiusMeters: Number(process.env.SURGE_ZONE_RADIUS_METERS ?? 2_000),
+  surgeUpdateIntervalMs: Number(process.env.SURGE_UPDATE_INTERVAL_MS ?? 15_000),
+  surgeMinMultiplier: Number(process.env.SURGE_MIN_MULTIPLIER ?? 1.0),
+  surgeMaxMultiplier: Number(process.env.SURGE_MAX_MULTIPLIER ?? 3.0),
+  surgeMinSampleRequests: Number(process.env.SURGE_MIN_SAMPLE_REQUESTS ?? 3),
+  surgeMaxChangePerInterval: Number(process.env.SURGE_MAX_CHANGE_PER_INTERVAL ?? 0.3),
+  fareBaseCents: Number(process.env.FARE_BASE_CENTS ?? 250),
+  farePerKmCents: Number(process.env.FARE_PER_KM_CENTS ?? 150),
+  farePerMinuteCents: Number(process.env.FARE_PER_MINUTE_CENTS ?? 25),
 };

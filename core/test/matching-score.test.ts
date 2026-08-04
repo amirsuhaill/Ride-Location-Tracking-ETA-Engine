@@ -24,7 +24,10 @@ describe("matching-score: scoreCandidate", () => {
       { distanceMeters: 1_000, idleTimeMs: 5 * 60_000, ratingScore: 0.5 },
       weights,
     );
-    const fresh = scoreCandidate({ distanceMeters: 1_000, idleTimeMs: 0, ratingScore: 0.5 }, weights);
+    const fresh = scoreCandidate(
+      { distanceMeters: 1_000, idleTimeMs: 0, ratingScore: 0.5 },
+      weights,
+    );
     expect(idle).toBeGreaterThan(fresh);
   });
 

@@ -154,6 +154,12 @@ export function getTripSubscriberCount(tripId: string): number {
   return subscribersByTripId.get(tripId)?.size ?? 0;
 }
 
+/** Total subscriber connections regardless of what they're subscribed to — used by
+ * GET /internal/metrics (Phase 11, docs/load-testing.md). */
+export function getTotalSubscriberCount(): number {
+  return subscriberBySocket.size;
+}
+
 export function isSocketSubscribed(socket: WebSocket): boolean {
   return subscriberBySocket.has(socket);
 }

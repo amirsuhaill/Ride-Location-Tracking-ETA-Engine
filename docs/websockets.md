@@ -28,7 +28,7 @@ token (JWT or similar) issued to that specific driver at login, checked in the s
 
 ### Message protocol
 
-Driver → server, one shape, no envelope (this channel only ever carries one message type):
+Driver → server, location updates have no envelope:
 
 ```json
 { "lat": 37.7749, "lng": -122.4194, "timestamp": 1706900000000 }
@@ -40,8 +40,18 @@ rejects `NaN` — `.finite()` rejects `NaN`/`Infinity` explicitly, on top of the
 minutes) of server time — this is what rejects "far in the future/past" without hardcoding an
 exact bound that would need constant tuning as latency assumptions change.
 
+Since Phase 6, this channel also accepts a second message shape — a driver's response to a trip
+offer — distinguished from a location update by the presence of a `type` field (location updates
+never have one):
+
+```json
+{ "type": "trip_response", "tripId": "...", "accept": true }
+```
+
 Server → driver: `{"type":"connected","driverId":...}` on connect, `{"type":"error","message":...}`
-if a message fails to parse or validate.
+if a message fails to parse or validate, and (Phase 6, see `docs/matching.md`)
+`{"type":"trip_offer",...}` when offered a trip and `{"type":"trip_matched",...}` once accepted
+and finalized.
 
 ### Malformed payloads don't crash anything
 
@@ -175,7 +185,10 @@ Rider/dispatcher → server, JSON messages with a `type` discriminator:
 
 Server → client: `{"type":"connected"}` on connect, `{"type":"subscribed", driverId or tripId+driverId}`
 on success, `{"type":"unsubscribed", reason}` on unsubscribe (`"client_requested"` or
-`"trip_completed"`/`"trip_cancelled"`), `{"type":"error", message}` on anything invalid.
+`"trip_completed"`/`"trip_cancelled"`), `{"type":"error", message}` on anything invalid, and
+(Phase 6, see `docs/matching.md`) `{"type":"trip_matched", tripId, driverId}` for a trip
+subscriber once that trip is matched — which also switches them onto receiving the newly
+assigned driver's location broadcasts, even if they subscribed before a driver was known.
 
 Location broadcasts are **batched and delta-compressed** (Phase 5, see
 `docs/ws-batching-and-compression.md` for the full design and measured bandwidth/latency

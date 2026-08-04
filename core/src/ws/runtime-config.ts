@@ -1,4 +1,5 @@
 import { config } from "../config";
+import { logger } from "../logger";
 
 export interface WsRuntimeConfig {
   driverThrottleMs: number;
@@ -15,8 +16,9 @@ export const MAX_BATCH_WINDOW_MS = 1_000;
 
 function clampBatchWindowMs(ms: number): number {
   if (ms > MAX_BATCH_WINDOW_MS) {
-    console.warn(
-      `wsBatchWindowMs=${ms} exceeds MAX_BATCH_WINDOW_MS=${MAX_BATCH_WINDOW_MS}; clamping.`,
+    logger.warn(
+      { requestedMs: ms, maxMs: MAX_BATCH_WINDOW_MS },
+      "wsBatchWindowMs exceeds MAX_BATCH_WINDOW_MS; clamping",
     );
     return MAX_BATCH_WINDOW_MS;
   }

@@ -1,5 +1,6 @@
 import { pool } from "../db";
 import { findStaleDrivers, evictStaleDriver } from "../repositories/drivers.geo.repository";
+import { logger } from "../logger";
 
 // Answers "what happens if Redis and Postgres disagree about a driver's status": Redis is the
 // fast, ephemeral "live" view used for nearby search; Postgres is the durable source of truth.
@@ -31,7 +32,7 @@ export function startReconciliationJob(intervalMs: number): void {
   if (reconcileTimer) return;
   reconcileTimer = setInterval(() => {
     reconcileStaleDrivers().catch((err: unknown) => {
-      console.error("reconcileStaleDrivers failed:", err);
+      logger.error({ err }, "reconcileStaleDrivers failed");
     });
   }, intervalMs);
   reconcileTimer.unref();

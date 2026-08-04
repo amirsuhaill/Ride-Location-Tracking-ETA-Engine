@@ -120,12 +120,25 @@ a row with neither is an orphaned point with no owner, which the schema shouldn'
 - B-tree on `location_history.recorded_at`, `.trip_id`, `.driver_id` — time-range queries and
   per-trip/per-driver history lookups.
 
+## Training data: a separate table, not `trips`
+
+Phase 8 added `training_trips` — a dedicated table for the historical trip simulator's synthetic
+ML training corpus, deliberately *not* stored in `trips`/`location_history` despite those tables
+being originally earmarked for this. See `docs/historical-data-simulator.md` for the full
+rationale (short version: `trips` is real operational state the rest of this system reads/writes;
+the training corpus needs baseline/variance-factor columns that have no meaning for a real trip,
+and has no FK to riders/drivers since these rows don't represent anything that happened to either).
+
+`training_trips` is read directly by `ml-service` (Phase 9, `docs/eta-model.md`) — a direct DB
+connection over the same `DATABASE_URL`, not an export/CSV step, since the data already lives
+here and ml-service already has connectivity.
+
 ## Verifying it yourself
 
 ```
 cd core
 npm run migrate:up      # apply all migrations to a fresh database
-npm run migrate:down -- 6   # fully reverse them
+npm run migrate:down -- 7   # fully reverse them
 npm run migrate:up      # bring the schema back
 npm run seed             # idempotent: safe to run more than once
 npm run db:explain       # EXPLAIN ANALYZE proving the GIST index is used, see below

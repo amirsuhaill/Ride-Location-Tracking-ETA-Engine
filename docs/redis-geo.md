@@ -5,6 +5,13 @@ Redis holds the **live** view of where online drivers are right now. Postgres st
 be durable; if it's flushed or restarted, drivers just reappear as they send their next location
 update.
 
+**Phase 12** implements a from-scratch geohash spatial index and benchmarks it head-to-head
+against the Redis GEO path documented here — see `docs/custom-geo-index.md` for the real,
+measured comparison (and the honest analysis of where each one wins).
+
+**Phase 14** shards this same kind of Redis Geo keyspace by region (separate logical databases per
+region, boundary-aware queries, region-crossing migration) — see `docs/sharding.md`.
+
 ## Key design
 
 - `drivers:geo` — one Redis Geo sorted set (`GEOADD`/`GEOSEARCH`), one member per driver, scored

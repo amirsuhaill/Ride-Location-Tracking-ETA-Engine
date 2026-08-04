@@ -6,6 +6,7 @@ networks:
 
 volumes:
   postgres_data:
+  ml_models:
 
 services:
   postgres:
@@ -41,6 +42,28 @@ services:
     networks:
       - ride-tracking-net
 
+  osrm:
+    image: osrm/osrm-backend
+    command: osrm-routed --algorithm ch /data/sf.osrm
+    volumes:
+      # Pre-built by infra/scripts/prepare-osrm-data.sh — gitignored, regenerable, see
+      # docs/osrm-routing.md. Read-only: the routed process never needs to write here.
+      - ./osrm-data:/data:ro
+    ports:
+      # Host 5000 is unusable on this project's dev Macs: macOS's AirPlay Receiver binds it by
+      # default (see docs/osrm-routing.md), so the default host mapping avoids that collision.
+      - "${OSRM_PORT:-5001}:5000"
+    healthcheck:
+      # No curl/wget in this image (Debian 9 slim base) — a bash /dev/tcp connect is a real,
+      # no-extra-tooling way to confirm osrm-routed is actually accepting connections.
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/127.0.0.1/5000"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - ride-tracking-net
+
   core:
     build:
       context: ../core
@@ -49,6 +72,7 @@ services:
       HOST: 0.0.0.0
       NODE_ENV: development
       LOG_LEVEL: info
+      TZ: America/Los_Angeles
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379
       DRIVER_STALE_MS: 90000
@@ -65,6 +89,32 @@ services:
       MATCH_IDLE_TIME_WEIGHT: 0.25
       MATCH_RATING_WEIGHT: 0.15
       MATCH_MAX_IDLE_TIME_MS: 600000
+      ETA_AVG_SPEED_MPS: 8
+      ETA_RECOMPUTE_INTERVAL_MS: 15000
+      ETA_RECOMPUTE_DISTANCE_METERS: 200
+      ETA_STALE_LOCATION_MS: 60000
+      # Defaults the packaged demo stack to showcase the full Phase 9+10 ML integration (with a
+      # heuristic fallback) — override via infra/.env if you want to demo/compare a different
+      # mode without editing this file. A bare `npm start` outside Docker still defaults to
+      # "heuristic" (core/.env.example) for backward-compatible, ML-independent behavior.
+      ETA_MODE: ${ETA_MODE:-ml_with_fallback}
+      ETA_ML_TIMEOUT_MS: 200
+      ETA_ML_CACHE_TTL_MS: 5000
+      OSRM_URL: http://osrm:5000
+      # Off by default: OSRM is a real routing engine with real map data to keep current — safer
+      # for a fresh checkout to fall back to the existing heuristic/ML path than to silently
+      # depend on an OSRM dataset that may not have been built yet (see docs/osrm-routing.md).
+      ETA_OSRM_ENABLED: ${ETA_OSRM_ENABLED:-false}
+      ETA_OSRM_TIMEOUT_MS: 300
+      SURGE_ZONE_RADIUS_METERS: 2000
+      SURGE_UPDATE_INTERVAL_MS: 15000
+      SURGE_MIN_MULTIPLIER: 1.0
+      SURGE_MAX_MULTIPLIER: 3.0
+      SURGE_MIN_SAMPLE_REQUESTS: 3
+      SURGE_MAX_CHANGE_PER_INTERVAL: 0.3
+      FARE_BASE_CENTS: 250
+      FARE_PER_KM_CENTS: 150
+      FARE_PER_MINUTE_CENTS: 25
       ML_SERVICE_URL: http://ml-service:8000
       APP_VERSION: 0.1.0
       BUILD_VERSION: ${BUILD_VERSION:-local}
@@ -88,10 +138,19 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379
       CORE_SERVICE_URL: http://core:3000
+      # Used only by scripts/train_model.py's retraining pipeline (Phase 15, docs/osrm-routing.md)
+      # — not by live /predict-eta serving, which has no OSRM feature in its request path.
+      OSRM_URL: http://osrm:5000
+      OSRM_TIMEOUT_SECONDS: 2.0
       APP_VERSION: 0.1.0
       BUILD_VERSION: ${BUILD_VERSION:-local}
     ports:
       - "${ML_SERVICE_PORT:-8000}:8000"
+    volumes:
+      # Trained model artifacts (Phase 9, see docs/eta-model.md) must survive a container
+      # rebuild/recreate — otherwise every `docker compose up --build` would silently wipe out
+      # whatever scripts/train_model.py had produced, forcing a retrain for no reason.
+      - ml_models:/app/models
     depends_on:
       postgres:
         condition: service_healthy

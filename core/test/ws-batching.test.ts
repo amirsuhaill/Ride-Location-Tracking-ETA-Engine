@@ -6,11 +6,7 @@ import { resetRedis } from "./helpers/redis";
 import { makeWsApp, resetWsForTests, connectWs, sleep } from "./helpers/ws";
 import { createDriver } from "../src/services/drivers.service";
 import * as driversRepo from "../src/repositories/drivers.repository";
-import {
-  flushBatch,
-  getPendingBatchSizeForTests,
-  enqueueLocationUpdate,
-} from "../src/ws/location-batch";
+import { flushBatch, getPendingBatchSize, enqueueLocationUpdate } from "../src/ws/location-batch";
 import { getWsConfig, MAX_BATCH_WINDOW_MS } from "../src/ws/runtime-config";
 
 async function makeOnlineDriver(plateHint: string) {
@@ -44,13 +40,13 @@ describe("location-batch: fleet-wide batching", () => {
     const driver = await makeOnlineDriver("A");
     enqueueLocationUpdate(driver.id, { lat: 10, lng: 20, timestamp: Date.now() });
 
-    expect(getPendingBatchSizeForTests()).toBe(1);
+    expect(getPendingBatchSize()).toBe(1);
     const beforeFlush = await driversRepo.findDriverById(driver.id);
     expect(beforeFlush?.location).toBeNull();
 
     await flushBatch();
 
-    expect(getPendingBatchSizeForTests()).toBe(0);
+    expect(getPendingBatchSize()).toBe(0);
     const afterFlush = await driversRepo.findDriverById(driver.id);
     expect(afterFlush?.location?.lat).toBeCloseTo(10, 4);
   });
@@ -63,7 +59,7 @@ describe("location-batch: fleet-wide batching", () => {
     enqueueLocationUpdate(driverA.id, { lat: 1, lng: 1, timestamp: Date.now() });
     enqueueLocationUpdate(driverB.id, { lat: 2, lng: 2, timestamp: Date.now() });
     enqueueLocationUpdate(driverC.id, { lat: 3, lng: 3, timestamp: Date.now() });
-    expect(getPendingBatchSizeForTests()).toBe(3);
+    expect(getPendingBatchSize()).toBe(3);
 
     await flushBatch();
 
@@ -90,7 +86,7 @@ describe("location-batch: fleet-wide batching", () => {
     // not just anything that happens to round-trip through PostGIS's geography type unchanged).
     enqueueLocationUpdate(driver.id, { lat: 1, lng: 2, timestamp: Date.now() });
     enqueueLocationUpdate(driver.id, { lat: 45, lng: 60, timestamp: Date.now() });
-    expect(getPendingBatchSizeForTests()).toBe(1);
+    expect(getPendingBatchSize()).toBe(1);
 
     await flushBatch();
 
@@ -100,7 +96,7 @@ describe("location-batch: fleet-wide batching", () => {
   });
 
   it("flushing an empty batch is a harmless no-op", async () => {
-    expect(getPendingBatchSizeForTests()).toBe(0);
+    expect(getPendingBatchSize()).toBe(0);
     await expect(flushBatch()).resolves.toBeUndefined();
   });
 

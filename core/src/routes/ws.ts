@@ -12,6 +12,7 @@ import {
 import { clientSubscriptionMessageSchema } from "../ws/messages";
 import { registerHeartbeat, unregisterHeartbeat } from "../ws/heartbeat";
 import { sendJson } from "../ws/util";
+import { logger } from "../logger";
 
 const driverIdQuerySchema = z.object({
   driverId: z.string().uuid("driverId query param must be a valid UUID"),
@@ -69,7 +70,7 @@ export async function wsRoutes(app: FastifyInstance): Promise<void> {
       }
 
       handleSubscriptionMessage(socket, result.data).catch((err: unknown) => {
-        console.error("subscription message handling failed:", err);
+        logger.error({ err }, "subscription message handling failed");
       });
     });
 
@@ -79,7 +80,7 @@ export async function wsRoutes(app: FastifyInstance): Promise<void> {
     });
 
     socket.on("error", (err: unknown) => {
-      console.error("subscriber WebSocket error:", err);
+      logger.error({ err }, "subscriber websocket error");
     });
   });
 }

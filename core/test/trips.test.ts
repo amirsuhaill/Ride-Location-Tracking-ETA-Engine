@@ -43,6 +43,10 @@ describe("trips", () => {
     expect(body.pickup.lat).toBeCloseTo(validPickup.lat, 5);
     expect(body.pickup.lng).toBeCloseTo(validPickup.lng, 5);
     expect(body.dropoff.lat).toBeCloseTo(validDropoff.lat, 5);
+    // Phase 13: a fresh fare quote is returned (not persisted) alongside the trip.
+    expect(body.fareEstimate.currency).toBe("USD");
+    expect(body.fareEstimate.totalCents).toBeGreaterThan(0);
+    expect(body.fareEstimate.surgeMultiplier).toBeGreaterThanOrEqual(1);
     await app.close();
   });
 

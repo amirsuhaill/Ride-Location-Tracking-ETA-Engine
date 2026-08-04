@@ -173,7 +173,12 @@ Response `200`: same shape as above. `404 NOT_FOUND` if `:id` doesn't exist.
 ### `POST /trips`
 
 A rider requests a trip with a pickup and dropoff point. The trip is created in `requested`
-status with no driver assigned yet (matching is Phase 6).
+status with no driver assigned yet. The response returns immediately — it does **not** wait for
+matching (see `docs/matching.md`), which runs asynchronously afterward and can take several
+seconds (it may try more than one candidate driver, each with its own accept/decline timeout).
+Poll `GET /trips/:id` or subscribe to the trip over WebSocket (`docs/websockets.md`) to learn the
+outcome: `status: "matched"` with `driverId` set, or `status: "cancelled"` with
+`cancellationReason` set to `"no_drivers_available"` or `"all_candidates_declined"`.
 
 Request:
 
@@ -201,9 +206,22 @@ Response `201`:
   "completedAt": null,
   "distanceMeters": null,
   "durationSeconds": null,
-  "cancellationReason": null
+  "cancellationReason": null,
+  "fareEstimate": {
+    "currency": "USD",
+    "baseCents": 250,
+    "distanceCents": 2014,
+    "timeCents": 699,
+    "subtotalCents": 2964,
+    "surgeMultiplier": 1.4,
+    "totalCents": 4150
+  }
 }
 ```
+
+`fareEstimate` (Phase 13, `docs/surge-pricing.md`) is a fresh quote computed at request time — base
++ distance + time, multiplied by the pickup zone's current surge multiplier — not persisted; a
+later `GET /trips/:id` won't show it.
 
 Failures:
 
@@ -213,6 +231,92 @@ Failures:
 ### `GET /trips/:id`
 
 Response `200`: same shape as above. `404 NOT_FOUND` if `:id` doesn't exist.
+
+### `GET /trips/:id/eta`
+
+Heuristic ETA (haversine distance / configurable average speed, adjusted for rush hour), the
+trained ML model (Phase 9), or ML-with-heuristic-fallback — selectable via `ETA_MODE`, no
+redeploy needed. See `docs/eta.md` for the heuristic's design and `docs/eta-integration.md` for
+the mode toggle, the ML timeout/fallback/caching behavior, and observability. Always `200` with a
+`status` field describing which case applies — `404` is reserved for a genuinely unknown `:id`.
+
+Response `200` (driver assigned, fresh location):
+
+```json
+{
+  "tripId": "1cd60ab9-...",
+  "status": "ok",
+  "etaSeconds": 342.7,
+  "distanceMeters": 2740.1,
+  "computedAt": "2026-01-01T00:00:05.000Z",
+  "driverLocationAgeMs": 1240,
+  "etaSource": "ml",
+  "servedFromCache": false
+}
+```
+
+Response headers (Phase 10, mirroring `etaSource`/`servedFromCache` for observability without
+parsing the body): `X-ETA-Source: heuristic|ml|ml_fallback|none`, `X-ETA-Cache: hit|miss|n/a`.
+
+`status` is one of:
+
+| `status` | Meaning | `etaSeconds` |
+| --- | --- | --- |
+| `ok` | Driver assigned, location fresh. | Current estimate. |
+| `no_driver_assigned` | Trip has no driver yet (still `requested`). | `null` |
+| `trip_completed` | Trip is `completed`. | `0` |
+| `trip_cancelled` | Trip is `cancelled`. | `null` |
+| `stale_location` | Driver has no location yet, or it's older than `ETA_STALE_LOCATION_MS`. | Last cached value if one exists, else `null`. |
+| `ml_unavailable` | `ETA_MODE=ml` only — an ML attempt just failed and there's no fallback. | Last cached value if one exists, else `null`. |
+
+## Surge
+
+### `GET /surge`
+
+Every currently-tracked zone's surge multiplier (Phase 13, `docs/surge-pricing.md`) — updated on a
+fixed background interval, never computed per-request.
+
+Response `200`:
+
+```json
+{
+  "zones": [
+    {
+      "zoneId": "20334525",
+      "center": { "lat": 37.781982421875, "lng": -122.40966796875 },
+      "multiplier": 2.8,
+      "requestCount": 6,
+      "driverCount": 1,
+      "updatedAt": "2026-08-04T12:10:26.106Z"
+    }
+  ]
+}
+```
+
+### `GET /surge?lat=&lng=`
+
+Just the multiplier for the zone covering one point (both params required together):
+
+```json
+{ "lat": 37.7749, "lng": -122.4194, "multiplier": 3 }
+```
+
+Failure: `lat`/`lng` out of range, or only one of the two provided → `400 VALIDATION_ERROR`.
+
+### `ml-service`'s `POST /predict-eta`
+
+The trained ML ETA model (Phase 9) is a separate service with its own API — not documented here
+since this file covers `core`'s REST API specifically. See `docs/eta-model.md` for the full
+request/response shape, validation behavior, and how it compares against this endpoint's
+heuristic.
+
+### `GET /internal/metrics`
+
+Diagnostics added for load testing (Phase 11) — event loop lag, the Postgres pool's live
+`totalCount`/`idleCount`/`waitingCount`, process memory, and WS/batch fleet sizes. See
+`docs/load-testing.md` for how this was used to find and confirm a real bottleneck.
+Unauthenticated and unversioned by design (a dev/ops diagnostic for a single-tenant project at
+this stage) — would need auth before ever being exposed outside a trusted network.
 
 ## Request logging
 

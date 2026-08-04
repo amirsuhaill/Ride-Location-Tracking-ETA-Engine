@@ -1,6 +1,9 @@
 import * as driversRepo from "../repositories/drivers.repository";
 import * as driversGeoRepo from "../repositories/drivers.geo.repository";
 import { broadcastDriverLocation } from "./subscriptions";
+import { handleDriverLocationUpdatesBatch } from "../services/eta.service";
+import { logger } from "../logger";
+import { locationUpdatesTotal, broadcastLatencySeconds } from "../metrics/registry";
 
 // Fleet-wide batching, separate from (and layered on top of) Phase 4's per-driver throttle:
 // the throttle decides WHEN a given driver's update becomes eligible to process (protects
@@ -20,9 +23,13 @@ const pendingBatch = new Map<string, PendingUpdate>();
  * shorter than the batch window) — same coalescing philosophy as Phase 4's per-driver throttle. */
 export function enqueueLocationUpdate(driverId: string, update: PendingUpdate): void {
   pendingBatch.set(driverId, update);
+  locationUpdatesTotal.inc();
 }
 
-export function getPendingBatchSizeForTests(): number {
+/** Also used by GET /internal/metrics (Phase 11, docs/load-testing.md) — a growing pending
+ * batch size under sustained load is a direct symptom of flushBatch() taking longer than the
+ * batch window to complete (see that doc's bottleneck write-up). */
+export function getPendingBatchSize(): number {
   return pendingBatch.size;
 }
 
@@ -55,9 +62,10 @@ export async function flushBatch(): Promise<void> {
 
     await driversGeoRepo.upsertDriverLocationsBatch(geoEntries);
 
+    const driversWithBroadcast: Array<{ driverId: string; update: PendingUpdate }> = [];
     for (const [driverId, update] of snapshot) {
       const driver = driverById.get(driverId);
-      if (!driver) continue;
+      if (!driver) continue; // driver vanished between enqueue and flush (deleted)
       broadcastDriverLocation(driverId, {
         driverId,
         lat: update.lat,
@@ -65,6 +73,25 @@ export async function flushBatch(): Promise<void> {
         timestamp: update.timestamp,
         status: driver.status,
       });
+      // "Added latency" in docs/ws-batching-and-compression.md's batch-window tradeoff table —
+      // send timestamp to broadcast, dominated by the batch window on localhost.
+      broadcastLatencySeconds.observe(Math.max(0, Date.now() - update.timestamp) / 1000);
+      driversWithBroadcast.push({ driverId, update });
+    }
+
+    // One query for the whole batch's active-trip lookups (Phase 11, docs/load-testing.md) —
+    // isolated so a failure here never blocks the broadcasts above, which have already gone out.
+    try {
+      await handleDriverLocationUpdatesBatch(
+        driversWithBroadcast.map(({ driverId, update }) => ({
+          driverId,
+          lat: update.lat,
+          lng: update.lng,
+          timestampMs: update.timestamp,
+        })),
+      );
+    } catch (err: unknown) {
+      logger.error({ err }, "handleDriverLocationUpdatesBatch failed");
     }
   } finally {
     flushing = false;
@@ -76,7 +103,7 @@ let batchTimer: NodeJS.Timeout | undefined;
 export function startBatchLoop(intervalMs: number): void {
   if (batchTimer) return;
   batchTimer = setInterval(() => {
-    flushBatch().catch((err: unknown) => console.error("flushBatch failed:", err));
+    flushBatch().catch((err: unknown) => logger.error({ err }, "flushBatch failed"));
   }, intervalMs);
   batchTimer.unref();
 }

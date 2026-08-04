@@ -5,6 +5,7 @@ import { registerHeartbeat, unregisterHeartbeat } from "./heartbeat";
 import { enqueueLocationUpdate } from "./location-batch";
 import { handleDriverResponse } from "./trip-offers";
 import { sendJson } from "./util";
+import { logger } from "../logger";
 
 interface LocationUpdate {
   lat: number;
@@ -128,8 +129,7 @@ export function handleDriverConnection(socket: WebSocket, driverId: string): voi
 
     // Location updates have no envelope (see driverLocationMessageSchema) — a trip response is
     // the one other message shape this channel accepts, distinguished by its "type" field.
-    const hasType =
-      typeof parsedJson === "object" && parsedJson !== null && "type" in parsedJson;
+    const hasType = typeof parsedJson === "object" && parsedJson !== null && "type" in parsedJson;
 
     if (hasType) {
       const result = tripResponseMessageSchema.safeParse(parsedJson);
@@ -168,7 +168,7 @@ export function handleDriverConnection(socket: WebSocket, driverId: string): voi
   });
 
   socket.on("error", (err: unknown) => {
-    console.error(`driver ${driverId} WebSocket error:`, err);
+    logger.error({ err, driverId }, "driver websocket error");
   });
 }
 

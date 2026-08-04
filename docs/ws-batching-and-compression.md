@@ -22,6 +22,13 @@ timer (`WS_BATCH_WINDOW_MS`, default 300ms). On each tick, `flushBatch()`:
    (`drivers.geo.repository.ts#upsertDriverLocationsBatch`) — 2×N commands, still a single
    `.exec()` round trip.
 4. Broadcasts each driver's update to its subscribers (delta-compressed — see below).
+5. Looks up which of this batch's drivers have an active trip and recomputes their ETA if due
+   (`eta.service.ts`, Phase 7) — added after this page was written, and *not* originally batched
+   like steps 2-3 above (it made one Postgres query per driver, unconditionally). At fleet scale
+   that turned out to be exactly the kind of per-driver round trip this page's batching already
+   existed to avoid — it saturated the Postgres connection pool badly enough to back up the whole
+   flush. Fixed in Phase 11 (`docs/load-testing.md`) by batching this lookup too, the same way
+   steps 2-3 already were.
 
 At 1,000 drivers each sending ~once/second, this turns what would otherwise be up to ~1,000
 separate two-command Redis pipelines and ~1,000 separate Postgres UPDATEs per second into at

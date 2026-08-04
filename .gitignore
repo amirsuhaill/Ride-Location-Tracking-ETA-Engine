@@ -7,8 +7,12 @@ dist/
 __pycache__/
 *.pyc
 .venv/
+.pytest_cache/
+.ruff_cache/
 
 postgres_data/
+ml-service/models/
+infra/osrm-data/
 *.log
 .DS_Store
 

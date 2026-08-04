@@ -3,7 +3,10 @@
 // after delta compression. This is the in-process signal referenced in
 // docs/ws-batching-and-compression.md; the authoritative, repeatable measurement is the load
 // test script's own client-observed numbers, but this gives real-time visibility while the
-// service is running.
+// service is running — also scraped live via GET /internal/metrics/prometheus (Phase 16, see
+// src/routes/metrics.ts), not just this periodic log line.
+import { logger } from "../logger";
+
 interface BandwidthTotals {
   messagesSent: number;
   fullPayloadEquivalentBytes: number;
@@ -39,9 +42,14 @@ export function getBandwidthStats(): BandwidthSummary {
 export function logBandwidthSummary(): void {
   const stats = getBandwidthStats();
   if (stats.messagesSent === 0) return;
-  console.log(
-    `[ws-bandwidth] ${stats.messagesSent} messages: ${stats.fullPayloadEquivalentBytes}B full-equivalent -> ` +
-      `${stats.actualBytesSent}B actual (${stats.savingsPercent.toFixed(1)}% saved)`,
+  logger.info(
+    {
+      messagesSent: stats.messagesSent,
+      fullPayloadEquivalentBytes: stats.fullPayloadEquivalentBytes,
+      actualBytesSent: stats.actualBytesSent,
+      savingsPercent: Math.round(stats.savingsPercent * 10) / 10,
+    },
+    "ws bandwidth summary",
   );
 }
 

@@ -8,12 +8,10 @@ import { notifyTripMatched } from "../ws/subscriptions";
 import { getMatchingConfig } from "./matching-config";
 import { scoreCandidate } from "./matching-score";
 import { getDriverRatingScore } from "./driver-rating.service";
+import { matchingLatencySeconds } from "../metrics/registry";
 
 export type MatchOutcome =
-  | "matched"
-  | "no_drivers_available"
-  | "all_candidates_declined"
-  | "already_resolved";
+  "matched" | "no_drivers_available" | "all_candidates_declined" | "already_resolved";
 
 export interface MatchResult {
   outcome: MatchOutcome;
@@ -39,47 +37,56 @@ export async function matchTrip(tripId: string): Promise<MatchResult> {
 
   if (trip.status !== "requested") {
     // Not this function's job to re-match an already-resolved trip (e.g. matchTrip invoked more
-    // than once for the same trip, or the rider cancelled in the meantime) — report as-is.
+    // than once for the same trip, or the rider cancelled in the meantime) — report as-is. Not a
+    // real matching attempt, so it's excluded from the matching-latency metric below.
     return { outcome: "already_resolved", trip };
   }
 
-  const matchConfig = getMatchingConfig();
-  const candidates = await driversGeoRepo.searchNearby(
-    trip.pickup.lat,
-    trip.pickup.lng,
-    matchConfig.searchRadiusMeters,
-    matchConfig.maxCandidates,
-  );
+  // Phase 11's "trip-matching latency" figure (docs/load-testing.md), now a live histogram
+  // instead of only the load generator's own client-side timing — observed in `finally` so every
+  // terminal outcome below (matched, no_drivers_available, all_candidates_declined) is measured.
+  const startedAtMs = Date.now();
+  try {
+    const matchConfig = getMatchingConfig();
+    const candidates = await driversGeoRepo.searchNearby(
+      trip.pickup.lat,
+      trip.pickup.lng,
+      matchConfig.searchRadiusMeters,
+      matchConfig.maxCandidates,
+    );
 
-  if (candidates.length === 0) {
-    return resolveUnmatched(tripId, "no_drivers_available", trip);
-  }
-
-  const now = Date.now();
-  const scored = await Promise.all(
-    candidates.map(async (candidate) => ({
-      candidate,
-      score: scoreCandidate(
-        {
-          distanceMeters: candidate.distanceMeters,
-          idleTimeMs: candidate.onlineSinceMs ? now - candidate.onlineSinceMs : 0,
-          ratingScore: await getDriverRatingScore(candidate.driverId),
-        },
-        matchConfig,
-      ),
-    })),
-  );
-  scored.sort((a, b) => b.score - a.score);
-
-  for (const { candidate } of scored) {
-    const matched = await tryOfferToDriver(trip, candidate.driverId, matchConfig.offerTimeoutMs);
-    if (matched) {
-      const finalTrip = await tripsRepo.findTripById(tripId);
-      return { outcome: "matched", trip: finalTrip ?? trip };
+    if (candidates.length === 0) {
+      return resolveUnmatched(tripId, "no_drivers_available", trip);
     }
-  }
 
-  return resolveUnmatched(tripId, "all_candidates_declined", trip);
+    const now = Date.now();
+    const scored = await Promise.all(
+      candidates.map(async (candidate) => ({
+        candidate,
+        score: scoreCandidate(
+          {
+            distanceMeters: candidate.distanceMeters,
+            idleTimeMs: candidate.onlineSinceMs ? now - candidate.onlineSinceMs : 0,
+            ratingScore: await getDriverRatingScore(candidate.driverId),
+          },
+          matchConfig,
+        ),
+      })),
+    );
+    scored.sort((a, b) => b.score - a.score);
+
+    for (const { candidate } of scored) {
+      const matched = await tryOfferToDriver(trip, candidate.driverId, matchConfig.offerTimeoutMs);
+      if (matched) {
+        const finalTrip = await tripsRepo.findTripById(tripId);
+        return { outcome: "matched", trip: finalTrip ?? trip };
+      }
+    }
+
+    return resolveUnmatched(tripId, "all_candidates_declined", trip);
+  } finally {
+    matchingLatencySeconds.observe((Date.now() - startedAtMs) / 1000);
+  }
 }
 
 async function resolveUnmatched(
