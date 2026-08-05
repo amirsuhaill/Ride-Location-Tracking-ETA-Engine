@@ -1,0 +1,18 @@
+# Docker only reads a .dockerignore from the build context's own root — since core/Dockerfile's
+# build context is now the repo root (Frontend Phase 10, needed so it can COPY from /frontend
+# too), this replaces relying on core/.dockerignore and ml-service/.dockerignore alone, which
+# Docker would otherwise silently ignore for a repo-root context.
+node_modules
+**/node_modules
+**/dist
+**/dist-ssr
+**/.env
+**/.env.local
+**/npm-debug.log
+.git
+docs
+PROMPTS.md
+README.md
+infra/osrm-data
+infra/postgres_data
+ml-service/models

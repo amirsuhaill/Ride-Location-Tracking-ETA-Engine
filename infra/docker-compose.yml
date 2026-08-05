@@ -66,7 +66,12 @@ services:
 
   core:
     build:
-      context: ../core
+      # Repo root, not `../core` — this image now also builds and bakes in the frontend's static
+      # assets (Frontend Phase 10, docs/frontend-deploy.md: folded into core's own Fastify
+      # instance rather than a separate static-file container), and core/Dockerfile's
+      # frontend-build stage needs `/frontend` in the build context to do that.
+      context: ..
+      dockerfile: core/Dockerfile
     environment:
       PORT: 3000
       HOST: 0.0.0.0
@@ -117,8 +122,21 @@ services:
       FARE_PER_MINUTE_CENTS: 25
       ML_SERVICE_URL: http://ml-service:8000
       # The browser's origin doesn't depend on where core itself runs (native vs. Docker) — the
-      # frontend's dev server port (Vite default 5173) is the relevant value either way.
+      # frontend's dev server port (Vite default 5173) is the relevant value either way. Not
+      # actually consulted at all for the default `make up` path below — core now serves the
+      # frontend itself (Frontend Phase 10), so a browser loading it makes same-origin requests,
+      # which never trigger a CORS check in the first place. Still real and necessary for
+      # `cd frontend && npm run dev` against this same docker-composed core, a genuinely
+      # cross-origin setup.
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      # Left empty by default: core's /runtime-config.js route (docs/frontend-deploy.md) then
+      # derives both from the real incoming request's own Host header — correct with zero
+      # configuration for this default same-origin deployment. Set both to point the exact same
+      # built frontend at a genuinely different core instance instead, no rebuild required — the
+      # real resolution of Phase 0's build-time-vs-runtime env var gotcha, not just a design
+      # discussed in a doc.
+      PUBLIC_CORE_API_URL: ${PUBLIC_CORE_API_URL:-}
+      PUBLIC_CORE_WS_URL: ${PUBLIC_CORE_WS_URL:-}
       APP_VERSION: 0.1.0
       BUILD_VERSION: ${BUILD_VERSION:-local}
     ports:

@@ -6,7 +6,9 @@ from-scratch spatial index — built in 16 incremental phases, each with real, l
 results rather than aspirational claims. See `PROMPTS.md` for the full phase-by-phase build log.
 
 - `/core` — Node.js + TypeScript (Fastify) service: REST API, WebSocket server, matching, ETA,
-  surge pricing.
+  surge pricing, and (Frontend Phase 10) the built frontend's static assets.
+- `/frontend` — React + TypeScript + Vite: rider request/tracking, driver dashboard, dispatcher
+  fleet map. Served by `core` itself in the normal deployment path — see "Frontend" below.
 - `/ml-service` — Python + FastAPI service: the trained ETA model (training + serving).
 - `/infra` — docker-compose stack: PostgreSQL (PostGIS), Redis, OSRM, and both services.
 
@@ -118,6 +120,82 @@ docker compose -f infra/docker-compose.yml exec postgres \
   psql -U ridetracking -d ridetracking -c "SELECT PostGIS_version();"
 ```
 
+## Frontend
+
+React + TypeScript + Vite, at `/frontend` — rider request/tracking, driver dashboard, and a
+dispatcher fleet map, all against the real `core` API/WebSocket endpoints above. Full build/deploy
+rationale (why it's folded into `core` rather than a separate container, and how the Vite
+build-time-vs-runtime env var problem is resolved) is in `docs/frontend-deploy.md`.
+
+**Running it:**
+
+```
+# Dev mode — hot reload, Vite dev server, talks to core on :3000
+cd frontend && npm install && npm run dev   # http://localhost:5173, /driver, /dispatcher
+
+# Via `make up` — core builds and serves the real production bundle itself, no separate step
+make up   # http://localhost:3000, /driver, /dispatcher
+```
+
+`make up` bakes the frontend's production build into `core`'s own Docker image
+(`core/Dockerfile`'s multi-stage build) and serves it from `core`'s existing Fastify instance —
+same origin as the API/WebSocket routes, so there's nothing frontend-specific to configure for the
+default deployment.
+
+**Responsive breakpoints** (`frontend/src/ui.ts`, `frontend/src/hooks/useBreakpoint.ts` — a real
+structural layout difference at each tier, not just font-size scaling; full detail in
+`docs/frontend-responsive.md`):
+
+| Tier | Width | Tailwind prefix | What changes |
+| --- | --- | --- | --- |
+| Phone | < 640px | unprefixed (mobile-first base) | Full-bleed map, draggable bottom sheet for trip/driver details, bottom tab bar nav |
+| Tablet | 640–1023px | `sm:` | Fixed 320px side panel next to the map, no overlay/collapse, top nav bar |
+| Desktop | >= 1024px | `lg:` | Side panel widens to 384px (`lg:w-96`) for fare/ETA line items |
+
+**Touch targets & accessibility** (`docs/frontend-responsive.md`): every interactive control
+(buttons, form inputs, both navs) meets a 44×44 CSS px minimum (Apple HIG / WCAG 2.5.5 AAA), with
+Leaflet's own default 26×26 zoom controls overridden to match. Audited with real Playwright
+measurements across all 4 screens × all 3 breakpoints: **87 controls measured, 0 under 44px** (plus
+24 documented, deliberate exclusions for the OSM/Leaflet attribution links, a licensing
+requirement). Full keyboard-navigation pass, including a Tab-reachable coordinate-entry form as a
+real keyboard equivalent to tapping the map (Leaflet has no native keyboard support), and a
+`BottomSheet` operable via Tab + Enter/Space + ArrowUp/ArrowDown, no drag required.
+
+**Screenshots** — real, captured from a running app (Playwright, not mockups):
+
+| Screen | Phone (375px) | Tablet (768px) | Desktop (1280px) |
+| --- | --- | --- | --- |
+| Rider request | `docs/screenshots/responsive-rider-request-phone.png` | `docs/screenshots/responsive-rider-request-tablet.png` | `docs/screenshots/responsive-rider-request-desktop.png` |
+| Live tracking | `docs/screenshots/responsive-rider-tracking-phone.png` | `docs/screenshots/responsive-rider-tracking-tablet.png` | `docs/screenshots/responsive-rider-tracking-desktop.png` |
+| Driver view | `docs/screenshots/responsive-driver-phone.png` | `docs/screenshots/responsive-driver-tablet.png` | `docs/screenshots/responsive-driver-desktop.png` |
+| Dispatcher map | `docs/screenshots/responsive-dispatcher-phone.png` | `docs/screenshots/responsive-dispatcher-tablet.png` | `docs/screenshots/responsive-dispatcher-desktop.png` |
+
+`docs/screenshots/phase10-served-by-core.png` — captured from `http://localhost:3000/`
+specifically (i.e. served by `core` itself via `make up`, not the Vite dev server on `:5173`),
+confirming this isn't just a dev-mode screenshot relabeled.
+
+**Real, current production build numbers** (`cd frontend && npm run build`, reproduced the same
+day this section was written — see `docs/frontend-deploy.md` for the full transcript):
+
+```
+dist/index.html                   1.22 kB │ gzip:  0.75 kB
+dist/assets/index-*.css          30.72 kB │ gzip: 10.32 kB
+dist/assets/index-*.js          429.14 kB │ gzip: 131.05 kB
+```
+
+**Lighthouse (mobile, real Chrome, simulated throttling)** — against `vite preview` serving this
+same production build, per `docs/frontend-responsive.md`:
+
+| Category | Score |
+| --- | --- |
+| Performance | 98 |
+| Accessibility | 100 |
+| Best Practices | 96 |
+| SEO | 82 |
+
+Core Web Vitals: First Contentful Paint 1.6s, Largest Contentful Paint 2.1s, Time to Interactive
+2.1s, Total Blocking Time 30ms, Cumulative Layout Shift 0.
+
 ## Feature tour
 
 | Feature | What | Docs |
@@ -131,6 +209,7 @@ docker compose -f infra/docker-compose.yml exec postgres \
 | Multi-region sharding | Per-region Redis logical DBs, boundary-aware cross-shard queries, live migration — not wired into production | `docs/sharding.md` |
 | Load testing | Real WebSocket fleet + concurrent trip-request load generator, a found-and-fixed Postgres pool bottleneck | `docs/load-testing.md` |
 | Observability | Structured JSON logging (both services) + a Prometheus metrics endpoint exposing the numbers below live | `docs/observability.md` |
+| Frontend | Rider request/tracking, driver dashboard, dispatcher fleet map — responsive across phone/tablet/desktop, served by `core` itself in production | `docs/frontend-deploy.md`, `docs/frontend-responsive.md`, and the other `docs/frontend-*.md` phase docs |
 
 ## Results
 
@@ -149,7 +228,7 @@ was measured in and what it doesn't prove.
 | OSRM road-network duration as an added ETA feature | **−0.3% MAE** (123.1s → 123.5s — did *not* help; see Known limitations) | `docs/osrm-routing.md` § "Real captured run"; regression coverage in `ml-service/tests/test_osrm_client.py` |
 | Custom geohash index vs. Redis GEO — writes | **18–25x faster** at every scale tested (100 / 1,000 / 100,000 points) | `docs/custom-geo-index.md` § "Insert (write) latency"; reproduce with `cd core && npm run benchmark:geo` |
 | Custom geohash index vs. Redis GEO — reads at scale | Redis **~10x** faster (radius search) / **~350x** faster (KNN) at 100,000 points, due to a documented fixed-bucket-precision limitation | `docs/custom-geo-index.md` § "Honest analysis: where each one wins, and why" |
-| Test suite size | **198 tests** (26 files) in `core`, **39 tests** (7 files) in `ml-service`, all passing | `cd core && npm test`; `cd ml-service && pytest` |
+| Test suite size | **208 tests** (28 files) in `core`, **85 tests** (9 files) in `frontend`, **39 tests** (7 files) in `ml-service`, all passing | `cd core && npm test`; `cd frontend && npm test`; `cd ml-service && pytest` |
 
 ## Known limitations
 
@@ -258,7 +337,9 @@ customize; the `.env` files already on disk hold local-dev-only, non-secret defa
 ## Running the tests
 
 ```
-cd core && npm test          # 198 tests, disposable Postgres+Redis via docker-compose.test.yml
+cd core && npm test          # 208 tests, disposable Postgres+Redis via docker-compose.test.yml
+cd frontend && npm test      # 85 tests, Vitest + Testing Library, no real backend required
+cd frontend && npm run test:e2e   # 1 real-browser test against a real disposable core stack
 cd ml-service && pytest      # 39 tests, no external services required (DB/OSRM calls are mocked
                               # or run against a real local stub server per test)
 ```
