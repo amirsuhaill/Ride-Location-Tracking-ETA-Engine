@@ -9,6 +9,7 @@ import * as driverService from "../src/services/drivers.service";
 import { createRider } from "../src/services/riders.service";
 import { requestTrip } from "../src/services/trips.service";
 import * as driversRepo from "../src/repositories/drivers.repository";
+import * as driversGeoRepo from "../src/repositories/drivers.geo.repository";
 import { matchTrip } from "../src/services/matching.service";
 import { isDriverLockedForTests } from "../src/repositories/driver-lock.repository";
 
@@ -101,6 +102,18 @@ describe("matching.service: matchTrip", () => {
     const updatedDriver = await driversRepo.findDriverById(driver.id);
     expect(updatedDriver?.status).toBe("busy");
 
+    // Redis's live geo index must reflect 'busy' immediately, not just Postgres — otherwise this
+    // driver stays offerable for a completely different trip until their next incidental location
+    // ping happens to refresh it (a real gap found via Frontend Phase 5's own live two-tab
+    // double-booking verification, see docs/frontend-driver-offers.md).
+    const stillNearby = await driversGeoRepo.searchNearby(
+      PICKUP.lat + NEARBY_OFFSET,
+      PICKUP.lng + NEARBY_OFFSET,
+      5_000,
+      10,
+    );
+    expect(stillNearby.some((d) => d.driverId === driver.id)).toBe(false);
+
     await driverClient.waitForMessage((m) => m.type === "trip_offer");
     await driverClient.waitForMessage((m) => m.type === "trip_matched");
 
@@ -117,12 +130,27 @@ describe("matching.service: matchTrip", () => {
     await app.ready();
 
     const trip = await makeTripNear(FAR_AWAY);
+
+    // A subscriber whose subscribe message arrives well BEFORE the trip resolves (the normal
+    // case — this is the exact scenario Frontend Phase 5's live verification found unhandled:
+    // notifyTripStatusChanged existed and was tested (Phase 6/websockets) but had no production
+    // caller for the cancellation path, so a subscriber who was already listening never learned
+    // the trip ended at all).
+    const riderSubscriber = await connectWs(app, "/ws/subscribe");
+    await riderSubscriber.waitForMessage((m) => m.type === "connected");
+    riderSubscriber.socket.send(JSON.stringify({ type: "subscribe", tripId: trip.id }));
+    await riderSubscriber.waitForMessage((m) => m.type === "subscribed");
+
     const result = await matchTrip(trip.id);
 
     expect(result.outcome).toBe("no_drivers_available");
     expect(result.trip.status).toBe("cancelled");
     expect(result.trip.cancellationReason).toBe("no_drivers_available");
 
+    const unsubscribed = await riderSubscriber.waitForMessage((m) => m.type === "unsubscribed");
+    expect(unsubscribed.reason).toBe("trip_cancelled");
+
+    riderSubscriber.socket.terminate();
     await app.close();
   });
 

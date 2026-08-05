@@ -1,10 +1,12 @@
+import { useState } from "react";
+import { DriverMap } from "../components/DriverMap";
+
 export function DispatcherView() {
+  const [trackedDriverId, setTrackedDriverId] = useState<string | null>(null);
+
   return (
-    <div className="p-6">
-      <h1 className="text-xl font-semibold">Dispatcher</h1>
-      <p className="mt-2 text-gray-600">
-        Live map of every driver and zone-level surge — built out in Phase 1/6.
-      </p>
+    <div className="h-full w-full">
+      <DriverMap trackedDriverId={trackedDriverId} onSelectDriver={setTrackedDriverId} />
     </div>
   );
 }

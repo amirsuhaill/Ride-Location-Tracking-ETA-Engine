@@ -4,7 +4,7 @@ import * as driversGeoRepo from "../repositories/drivers.geo.repository";
 import * as driverLockRepo from "../repositories/driver-lock.repository";
 import { sendToDriver } from "../ws/driver-connections";
 import { waitForDriverResponse } from "../ws/trip-offers";
-import { notifyTripMatched } from "../ws/subscriptions";
+import { notifyTripMatched, notifyTripStatusChanged } from "../ws/subscriptions";
 import { getMatchingConfig } from "./matching-config";
 import { scoreCandidate } from "./matching-score";
 import { getDriverRatingScore } from "./driver-rating.service";
@@ -95,10 +95,22 @@ async function resolveUnmatched(
   fallback: Trip,
 ): Promise<MatchResult> {
   const updated = await tripsRepo.markTripUnmatched(tripId, reason);
-  if (updated) return { outcome: reason, trip: updated };
+  if (updated) {
+    // Tells any rider/dispatcher subscribed to this trip that it just ended — the mechanism
+    // itself (ws/subscriptions.ts#notifyTripStatusChanged) has existed and been directly tested
+    // since Phase 6/websockets, but had no production caller for the cancellation path until now
+    // (a real gap: a rider whose subscribe message arrived before this resolution — the normal
+    // case for a cancellation that takes any real time, e.g. a full offer-timeout cycle — would
+    // otherwise never learn the trip ended at all; only a subscribe racing an *already*-resolved
+    // trip got the "already ended" error path instead. Found via Frontend Phase 5's own live
+    // verification of a driver letting a real offer time out, see docs/frontend-driver-offers.md).
+    notifyTripStatusChanged(tripId, "cancelled");
+    return { outcome: reason, trip: updated };
+  }
   // The guard on markTripUnmatched (WHERE status = 'requested') didn't apply — something else
   // already resolved this trip. Report its actual current state instead of a stale/misleading
-  // one built from `fallback`.
+  // one built from `fallback`. Deliberately no notifyTripStatusChanged here — we didn't cause
+  // whatever the real resolution was, so it's not ours to announce.
   const current = (await tripsRepo.findTripById(tripId)) ?? fallback;
   return { outcome: current.status === "matched" ? "matched" : reason, trip: current };
 }
@@ -135,6 +147,18 @@ async function tryOfferToDriver(
 
     const finalized = await tripsRepo.tryFinalizeMatch(trip.id, driverId);
     if (!finalized) return false; // guarded by the lock above already, but never trust one layer
+
+    // tryFinalizeMatch only writes the new 'busy' status to Postgres (the transactional source of
+    // truth for the match itself) — it has no reason to know about Redis's separate live geo
+    // index, so without this the driver stays falsely visible to searchNearby (and therefore
+    // offerable for a completely different trip) until their next routine location ping happens
+    // to refresh it. Found via Frontend Phase 5's own live two-tab double-booking verification:
+    // right after a real match, a direct /drivers/nearby check still returned the now-busy
+    // driver. The Redis distributed lock (acquired above) is still what actually prevents a
+    // *concurrent* double-booking — this closes a separate, narrower gap: a driver receiving a
+    // stray trip_offer for a new trip while already mid-trip on this one, purely because the
+    // cached view hadn't caught up yet. See docs/matching.md and docs/frontend-driver-offers.md.
+    await driversGeoRepo.updateDriverStatusInRedis(driverId, "busy");
 
     sendToDriver(driverId, {
       type: "trip_matched",

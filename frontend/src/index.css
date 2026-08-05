@@ -5,3 +5,44 @@ body,
 #root {
   height: 100%;
 }
+
+/* SurgeOverlay's permanent per-zone multiplier label (e.g. "1.4x") — overrides Leaflet's default
+   tooltip chrome (white bubble + pointer arrow) with a plain bold number that reads directly
+   against the colored zone circle underneath it, legible independent of the circle's own color. */
+.surge-label {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: #111827;
+  text-shadow:
+    0 1px 2px white,
+    0 -1px 2px white,
+    1px 0 2px white,
+    -1px 0 2px white;
+}
+
+.surge-label::before {
+  display: none;
+}
+
+/* Leaflet's own zoom in/out controls default to 26x26 (30x30 via its own `.leaflet-touch`
+   variant) — under this project's stated 44px minimum touch target (Frontend Phase 7,
+   docs/frontend-responsive.md). `!important` is deliberate, not sloppy: `leaflet/dist/leaflet.css`
+   is imported per-component (each map component's own `import "leaflet/dist/leaflet.css"`), so
+   its `<style>` tag can end up inserted into the document *after* this file's — with the
+   `.leaflet-touch .leaflet-bar a` variant at equal selector specificity to any same-shape
+   override here, plain source order would decide the winner, which is exactly the kind of
+   import-order fragility `!important` sidesteps for a one-off third-party-library override like
+   this. The OSM/Leaflet attribution links in the map's bottom-right corner are a deliberate,
+   stated exception, not an oversight — they're a licensing requirement
+   (https://www.openstreetmap.org/copyright), not a control this app designed for frequent
+   interaction, and enlarging that text to a 44px tap target would look absurd against its own
+   tiny font size; every project built on Leaflet/OSM tiles leaves this exactly as-is. */
+.leaflet-bar a {
+  width: 44px !important;
+  height: 44px !important;
+  line-height: 44px !important;
+}

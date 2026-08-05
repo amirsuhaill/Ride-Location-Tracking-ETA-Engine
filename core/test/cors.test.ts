@@ -63,4 +63,27 @@ describe("CORS (config.corsOrigins, default http://localhost:5173)", () => {
 
     await app.close();
   });
+
+  // @fastify/cors defaults `methods` to `GET,HEAD,POST` only — PATCH was silently unusable
+  // cross-origin until this was caught live (Frontend Phase 4's driver status toggle was the
+  // first real cross-origin PATCH request anywhere in this project). This test exists
+  // specifically so that regression can never come back unnoticed.
+  it("answers a real CORS preflight (OPTIONS) request for a PATCH route", async () => {
+    const app = makeApp();
+    const res = await app.inject({
+      method: "OPTIONS",
+      url: "/drivers/00000000-0000-0000-0000-000000000000/status",
+      headers: {
+        origin: "http://localhost:5173",
+        "access-control-request-method": "PATCH",
+        "access-control-request-headers": "content-type",
+      },
+    });
+
+    expect(res.statusCode).toBe(204);
+    expect(res.headers["access-control-allow-origin"]).toBe("http://localhost:5173");
+    expect(res.headers["access-control-allow-methods"]).toContain("PATCH");
+
+    await app.close();
+  });
 });

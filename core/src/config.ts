@@ -1,4 +1,5 @@
 import { config as loadEnv } from "dotenv";
+import path from "node:path";
 
 loadEnv();
 
@@ -47,6 +48,28 @@ export interface AppConfig {
    * Vite's own default dev server port so `npm run dev` in /frontend works against a locally
    * running core with zero config. */
   corsOrigins: string[];
+  /**
+   * Where the built frontend's static assets live on disk (Frontend Phase 10, see
+   * docs/frontend-deploy.md) — defaults to the exact path the real production Dockerfile copies
+   * them to (`/app/public`, a sibling of `dist/` where this compiled file itself runs from), so
+   * the common Docker deployment needs zero extra configuration. Left unset (the directory simply
+   * doesn't exist) in local dev/the test suite, where no frontend build has ever been copied
+   * anywhere near core — server.ts checks existence before registering static serving at all, so
+   * this never affects dev/test behavior.
+   */
+  frontendDistPath: string;
+  /**
+   * Explicit overrides for what the served `/runtime-config.js` tells the frontend to call this
+   * API/WebSocket server at. Left empty (the default) means "derive from the actual incoming
+   * request's own Host header" — correct with zero configuration for the common case (frontend
+   * and core served from the same origin), and for a reverse proxy that forwards the real
+   * Host. Setting these explicitly is what lets one built frontend bundle point at a *different*
+   * core instance than the one serving its static files — the real proof this project's
+   * build-time-vs-runtime env var decision (Phase 0's original gotcha) actually works, not just a
+   * design discussed in a doc (docs/frontend-deploy.md).
+   */
+  publicCoreApiUrl: string;
+  publicCoreWsUrl: string;
   /** A driver's live Redis entry older than this is treated as stale (see docs/redis-geo.md). */
   driverStaleMs: number;
   /** How often the background reconciliation job scans for stale driver entries. */
@@ -149,6 +172,9 @@ export const config: AppConfig = {
     .split(",")
     .map((origin) => origin.trim())
     .filter((origin) => origin.length > 0),
+  frontendDistPath: process.env.FRONTEND_DIST_PATH ?? path.join(__dirname, "../public"),
+  publicCoreApiUrl: process.env.PUBLIC_CORE_API_URL ?? "",
+  publicCoreWsUrl: process.env.PUBLIC_CORE_WS_URL ?? "",
   driverStaleMs: Number(process.env.DRIVER_STALE_MS ?? 90_000),
   reconcileIntervalMs: Number(process.env.RECONCILE_INTERVAL_MS ?? 30_000),
   wsDriverThrottleMs: Number(process.env.WS_DRIVER_THROTTLE_MS ?? 1_000),

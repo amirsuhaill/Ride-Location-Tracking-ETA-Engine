@@ -1,10 +1,39 @@
+import { CreateDriverForm } from "../components/CreateDriverForm";
+import { DriverDashboard } from "../components/DriverDashboard";
+import { useDriverIdentity } from "../hooks/useDriverIdentity";
+import { TOUCH_TARGET_CLASS } from "../ui";
+
 export function DriverView() {
-  return (
-    <div className="p-6">
-      <h1 className="text-xl font-semibold">Driver</h1>
-      <p className="mt-2 text-gray-600">
-        Go online, stream location, and respond to trip offers — built out in Phase 4/5.
-      </p>
-    </div>
-  );
+  const { state, createDriver, refresh } = useDriverIdentity();
+
+  if (state.status === "checking") {
+    return (
+      <div className="flex h-full items-center justify-center p-6 text-sm text-gray-600">
+        Checking driver…
+      </div>
+    );
+  }
+
+  if (state.status === "needs_driver") {
+    return <CreateDriverForm onCreate={createDriver} />;
+  }
+
+  if (state.status === "check_failed") {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+        <p role="alert" className="text-sm text-red-600">
+          {state.message}
+        </p>
+        <button
+          type="button"
+          onClick={refresh}
+          className={`rounded border border-gray-300 px-4 text-sm ${TOUCH_TARGET_CLASS}`}
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  return <DriverDashboard driver={state.driver} />;
 }

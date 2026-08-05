@@ -9,6 +9,7 @@ import { riderRoutes } from "./routes/riders";
 import { tripRoutes } from "./routes/trips";
 import { surgeRoutes } from "./routes/surge";
 import { wsRoutes } from "./routes/ws";
+import { registerFrontend } from "./routes/frontend";
 import { registerErrorHandler } from "./plugins/error-handler";
 import { registerRequestLogging } from "./plugins/request-logging";
 import { startReconciliationJob, stopReconciliationJob } from "./services/reconciliation.service";
@@ -22,6 +23,7 @@ import { configureMatching, type MatchingRuntimeConfig } from "./services/matchi
 import { configureEta, type EtaRuntimeConfig } from "./services/eta-config";
 import { configureSurge, type SurgeRuntimeConfig } from "./services/surge-config";
 import { startSurgeUpdateLoop, stopSurgeUpdateLoop } from "./services/surge.service";
+import { configureFrontend, type FrontendRuntimeConfig } from "./services/frontend-config";
 
 export interface BuildServerOptions {
   /** Set false to silence logging (used by the test suite). Defaults to config.logLevel. */
@@ -45,6 +47,10 @@ export interface BuildServerOptions {
    * minSampleRequests/maxChangePerInterval so scenarios resolve in one or two computeAndUpdateSurge()
    * calls instead of real intervals). */
   surge?: Partial<SurgeRuntimeConfig>;
+  /** Overrides for the served frontend's dist path / runtime `/runtime-config.js` values (used
+   * by tests — points at a real temp directory with a fake built frontend, rather than needing
+   * an actual Docker image build to exercise routes/frontend.ts). */
+  frontend?: Partial<FrontendRuntimeConfig>;
 }
 
 export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
@@ -63,6 +69,7 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
   if (opts.matching) configureMatching(opts.matching);
   if (opts.eta) configureEta(opts.eta);
   if (opts.surge) configureSurge(opts.surge);
+  if (opts.frontend) configureFrontend(opts.frontend);
 
   registerErrorHandler(app);
   registerRequestLogging(app);
@@ -73,7 +80,13 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
   // can work around individually. Allowlist, not `origin: true`/`*`: only origins explicitly
   // configured via CORS_ORIGINS get access, same "explicit allowlist over open-ended wildcard"
   // posture as this project's other boundary checks (e.g. NEARBY_MAX_RADIUS_METERS).
-  app.register(corsPlugin, { origin: config.corsOrigins });
+  //
+  // `methods` must be listed explicitly: @fastify/cors defaults to `GET,HEAD,POST` only — a real
+  // gap that went undetected through Phase 0-3's frontend work (only ever GET/POST from the
+  // browser) until Phase 4's driver status toggle made the first cross-origin PATCH request and
+  // hit a real "Method PATCH is not allowed by Access-Control-Allow-Methods" preflight failure.
+  // Every method this API's routes actually use, not a speculative "allow everything" list.
+  app.register(corsPlugin, { origin: config.corsOrigins, methods: ["GET", "POST", "PATCH"] });
 
   // Must be registered before any route using { websocket: true } so it can intercept the
   // upgrade.
@@ -86,6 +99,10 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
   app.register(tripRoutes);
   app.register(surgeRoutes);
   app.register(wsRoutes);
+  // Registered last — a genuine catch-all/fallback concern (serves the built frontend, and
+  // falls back to index.html for any non-API GET so react-router's client-side routes survive a
+  // direct navigation/reload), not another API route (Frontend Phase 10, docs/frontend-deploy.md).
+  app.register(registerFrontend);
 
   app.addHook("onClose", (_instance, done) => {
     closeAllDriverConnections();

@@ -12,6 +12,12 @@ dist
 dist-ssr
 *.local
 
+# Playwright's own per-run artifacts (screenshots/traces on failure, HTML report) — real output
+# from a real run, never something to commit.
+test-results
+playwright-report
+blob-report
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

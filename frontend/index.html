@@ -11,6 +11,15 @@
   </head>
   <body>
     <div id="root"></div>
+    <!--
+      A real route on core (Frontend Phase 10, docs/frontend-deploy.md) when this app is served by
+      core itself — sets window.__RUNTIME_CONFIG__ before src/config.ts (or any other app code)
+      ever runs. A plain script (no type="module"), so it executes immediately as parsed, ahead of
+      the deferred module script below, regardless of tag order. In dev mode (`npm run dev`) this
+      path simply doesn't exist — the browser logs a harmless 404 for it and config.ts's own
+      fallback to Vite's `import.meta.env` takes over, exactly as before this phase.
+    -->
+    <script src="/runtime-config.js"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
