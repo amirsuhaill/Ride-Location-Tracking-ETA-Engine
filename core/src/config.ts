@@ -40,6 +40,13 @@ export interface AppConfig {
   mlServiceUrl: string;
   appVersion: string;
   buildVersion: string;
+  /** Browser origins allowed to call this API cross-origin (see src/server.ts's @fastify/cors
+   * registration) — a browser-based frontend (a different origin: a different port, in local
+   * dev) is otherwise blocked by same-origin policy before its request ever reaches a route
+   * handler at all, regardless of anything the handler itself does. Comma-separated; defaults to
+   * Vite's own default dev server port so `npm run dev` in /frontend works against a locally
+   * running core with zero config. */
+  corsOrigins: string[];
   /** A driver's live Redis entry older than this is treated as stale (see docs/redis-geo.md). */
   driverStaleMs: number;
   /** How often the background reconciliation job scans for stale driver entries. */
@@ -138,6 +145,10 @@ export const config: AppConfig = {
   mlServiceUrl: process.env.ML_SERVICE_URL ?? "",
   appVersion: process.env.APP_VERSION ?? "0.1.0",
   buildVersion: process.env.BUILD_VERSION ?? "local",
+  corsOrigins: (process.env.CORS_ORIGINS ?? "http://localhost:5173")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter((origin) => origin.length > 0),
   driverStaleMs: Number(process.env.DRIVER_STALE_MS ?? 90_000),
   reconcileIntervalMs: Number(process.env.RECONCILE_INTERVAL_MS ?? 30_000),
   wsDriverThrottleMs: Number(process.env.WS_DRIVER_THROTTLE_MS ?? 1_000),

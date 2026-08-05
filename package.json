@@ -4,7 +4,8 @@
   "private": true,
   "description": "Monorepo for the ride-tracking & ETA engine project.",
   "workspaces": [
-    "core"
+    "core",
+    "frontend"
   ],
   "scripts": {
     "up": "docker compose --env-file infra/.env -f infra/docker-compose.yml up --build",

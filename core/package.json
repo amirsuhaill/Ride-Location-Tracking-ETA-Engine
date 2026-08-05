@@ -27,6 +27,7 @@
     "test": "bash scripts/test.sh"
   },
   "dependencies": {
+    "@fastify/cors": "^11.3.0",
     "@fastify/websocket": "^11.3.0",
     "dotenv": "^16.4.5",
     "fastify": "^5.1.0",

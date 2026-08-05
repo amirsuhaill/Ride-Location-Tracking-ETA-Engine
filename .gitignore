@@ -18,3 +18,4 @@ infra/osrm-data/
 
 .claude
 PROMPTS.md
+FRONTEND_PROMPTS.md

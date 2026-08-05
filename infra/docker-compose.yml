@@ -116,6 +116,9 @@ services:
       FARE_PER_KM_CENTS: 150
       FARE_PER_MINUTE_CENTS: 25
       ML_SERVICE_URL: http://ml-service:8000
+      # The browser's origin doesn't depend on where core itself runs (native vs. Docker) — the
+      # frontend's dev server port (Vite default 5173) is the relevant value either way.
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
       APP_VERSION: 0.1.0
       BUILD_VERSION: ${BUILD_VERSION:-local}
     ports:

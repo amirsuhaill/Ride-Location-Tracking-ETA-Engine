@@ -1,5 +1,6 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import websocketPlugin from "@fastify/websocket";
+import corsPlugin from "@fastify/cors";
 import { config } from "./config";
 import { healthRoute } from "./routes/health";
 import { metricsRoute } from "./routes/metrics";
@@ -65,6 +66,14 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
 
   registerErrorHandler(app);
   registerRequestLogging(app);
+
+  // A browser-based frontend (a different origin — a different port, in local dev) is blocked by
+  // same-origin policy before any request reaches a route handler at all, regardless of anything
+  // the handler does — this has to be a plugin registered ahead of routes, not something routes
+  // can work around individually. Allowlist, not `origin: true`/`*`: only origins explicitly
+  // configured via CORS_ORIGINS get access, same "explicit allowlist over open-ended wildcard"
+  // posture as this project's other boundary checks (e.g. NEARBY_MAX_RADIUS_METERS).
+  app.register(corsPlugin, { origin: config.corsOrigins });
 
   // Must be registered before any route using { websocket: true } so it can intercept the
   // upgrade.
